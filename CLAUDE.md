@@ -27,6 +27,10 @@ Events are forwarded by a Shelly Script (id=1, named `sump-pump-bridge`) running
 
 The Shelly built-in webhook system (`Webhook.*` RPC) was tried but never delivered `pm1.apower_change` events even after a firmware update to 1.3.3. The script approach bypasses that broken path entirely.
 
+**`192.168.10.188` must be a fixed IP reservation in UniFi for the device's MAC (`EC:DA:3B:C6:B2:AC`), not just an observed DHCP address.** The Script's webhook call and the `SHELLY_URL` polling fallback both hardcode this IP. If the reservation is ever removed (e.g. during device troubleshooting), the device can keep the same IP by luck for a while, then silently drift to a different one on its next lease renewal, breaking event delivery with no obvious error.
+
+**The Shelly mobile app / cloud account is not part of this integration and does not need to be paired for events to flow.** The device only needs local WiFi connectivity and the Script above — RPC calls (`Script.*`, `PM1.GetStatus`, etc.) work over the local network regardless of whether the device is claimed in the app. If the device won't pair with the app (BLE/WiFi provisioning failures), configuring WiFi directly via the device's own local AP-mode page (connect to its `ShellyPMMiniG3-*` hotspot, then `http://192.168.33.1`) is a reliable fallback that doesn't require the app at all.
+
 ### Restoring polling (recovery fallback)
 
 If the Shelly Script stops running (e.g. firmware wipe, device replacement), polling can be re-enabled without a code change:
