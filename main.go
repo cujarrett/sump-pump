@@ -230,7 +230,18 @@ func main() {
 		Help:    "HTTP request latency in seconds.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method", "path"})
-	reg.MustRegister(wattsGauge, runningGauge, runsTotal, requestsTotal, requestDuration)
+	shelly := &shellyMetrics{
+		configured: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "shelly_webhook_configured",
+			Help: "1 if the Shelly webhook matched desired config at the last reconcile, 0 otherwise.",
+		}),
+		lastSeen: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "shelly_last_seen_timestamp_unix",
+			Help: "Unix time of the last successful reconcile, meaning the meter answered.",
+		}),
+	}
+	reg.MustRegister(wattsGauge, runningGauge, runsTotal, requestsTotal, requestDuration,
+		shelly.configured, shelly.lastSeen)
 
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
@@ -252,6 +263,10 @@ func main() {
 		requestsTotal:   requestsTotal,
 		requestDuration: requestDuration,
 	}
+
+	// Runs in the background and tolerates an unreachable device, so a Shelly
+	// that is slow to rejoin WiFi after an outage never blocks startup.
+	startShellyReconciler(context.Background(), shelly)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
