@@ -45,18 +45,11 @@ func (f *fakeShelly) handler() http.Handler {
 			return
 		}
 
-		switch req.Method {
-		case "Webhook.List":
-			enc.Encode(map[string]any{ //nolint:errcheck
-				"id": 1, "result": map[string]any{"hooks": f.hooks, "rev": 1},
-			})
-		case "Webhook.Create", "Webhook.Update":
-			enc.Encode(map[string]any{ //nolint:errcheck
-				"id": 1, "result": map[string]any{"id": 1, "rev": 2},
-			})
-		default:
-			http.Error(w, "unknown method", http.StatusNotFound)
+		result := map[string]any{"id": 1}
+		if req.Method == "Webhook.List" {
+			result = map[string]any{"hooks": f.hooks}
 		}
+		enc.Encode(map[string]any{"id": 1, "result": result}) //nolint:errcheck
 	})
 }
 
@@ -64,31 +57,26 @@ func newTestClient(t *testing.T, f *fakeShelly) *shellyClient {
 	t.Helper()
 	srv := httptest.NewServer(f.handler())
 	t.Cleanup(srv.Close)
-	return newShellyClient(strings.TrimPrefix(srv.URL, "http://"), testCallbackBase)
+	return newShellyClient(srv.URL, testCallbackBase)
 }
 
 // healthyHook is the shape the reconciler should leave the device in.
 func healthyHook() shellyHook {
 	return shellyHook{
-		ID:           1,
-		Enable:       true,
-		Event:        shellyEvent,
-		URLs:         []string{testCallbackBase + shellyCallbackPath},
-		Condition:    nil,
-		RepeatPeriod: 0,
+		ID:     1,
+		Enable: true,
+		Event:  shellyEvent,
+		URLs:   []string{testCallbackBase + shellyCallbackPath},
 	}
 }
 
 func TestCallbackURLUsesEventPlaceholder(t *testing.T) {
 	c := newShellyClient("192.168.10.188", testCallbackBase)
 
+	// The bare ${apower} form is silently not substituted by the device.
 	want := testCallbackBase + "/webhook?apower=${ev.apower}"
 	if c.callbackURL != want {
 		t.Fatalf("callbackURL = %q, want %q", c.callbackURL, want)
-	}
-	// The bare ${apower} form is silently not substituted by the device.
-	if strings.Contains(c.callbackURL, "?apower=${apower}") {
-		t.Fatal("callback URL uses the non-substituted ${apower} form")
 	}
 }
 
@@ -116,13 +104,6 @@ func TestReconcileCreatesWhenNoHooks(t *testing.T) {
 	if got := strings.Join(f.calls, ","); got != "Webhook.List,Webhook.Create" {
 		t.Fatalf("calls = %q", got)
 	}
-	// Throttling the event costs run-duration accuracy, so neither may be set.
-	if f.lastReq["condition"] != nil {
-		t.Fatalf("condition = %v, want nil", f.lastReq["condition"])
-	}
-	if f.lastReq["repeat_period"].(float64) != 0 {
-		t.Fatalf("repeat_period = %v, want 0", f.lastReq["repeat_period"])
-	}
 }
 
 func TestReconcileIsNoopWhenAlreadyCorrect(t *testing.T) {
@@ -141,70 +122,75 @@ func TestReconcileIsNoopWhenAlreadyCorrect(t *testing.T) {
 	}
 }
 
-// The failure that stopped the feed: the hook existed and looked healthy, but
-// its URL used the placeholder the device does not substitute.
-func TestReconcileRepairsBadPlaceholder(t *testing.T) {
-	h := healthyHook()
-	h.ID = 7
-	h.URLs = []string{testCallbackBase + "/webhook?apower=${apower}"}
-	f := &fakeShelly{hooks: []shellyHook{h}}
-	c := newTestClient(t, f)
+// Every way the device drifts from desired state, and what the repair must fix.
+// A throttled hook is the subtle one: it still delivers, so nothing looks
+// broken, but too sparsely to time a run.
+func TestReconcileRepairsDrift(t *testing.T) {
+	throttled := "ev.apower >= 0"
 
-	result, err := c.reconcile(context.Background())
-	if err != nil {
-		t.Fatalf("reconcile: %v", err)
+	cases := []struct {
+		name   string
+		mutate func(*shellyHook)
+		check  func(*testing.T, map[string]any)
+	}{
+		{
+			name:   "placeholder the device does not substitute",
+			mutate: func(h *shellyHook) { h.URLs = []string{testCallbackBase + "/webhook?apower=${apower}"} },
+			check: func(t *testing.T, req map[string]any) {
+				if urls := req["urls"].([]any); urls[0].(string) != testCallbackBase+shellyCallbackPath {
+					t.Fatalf("url = %v", urls[0])
+				}
+			},
+		},
+		{
+			name:   "condition set",
+			mutate: func(h *shellyHook) { h.Condition = &throttled },
+			check: func(t *testing.T, req map[string]any) {
+				if req["condition"] != nil {
+					t.Fatalf("condition = %v, want cleared", req["condition"])
+				}
+			},
+		},
+		{
+			name:   "repeat_period set",
+			mutate: func(h *shellyHook) { h.RepeatPeriod = 60 },
+			check: func(t *testing.T, req map[string]any) {
+				if req["repeat_period"].(float64) != 0 {
+					t.Fatalf("repeat_period = %v, want cleared", req["repeat_period"])
+				}
+			},
+		},
+		{
+			name:   "disabled",
+			mutate: func(h *shellyHook) { h.Enable = false },
+			check: func(t *testing.T, req map[string]any) {
+				if req["enable"] != true {
+					t.Fatalf("enable = %v, want true", req["enable"])
+				}
+			},
+		},
 	}
-	if result != "updated" {
-		t.Fatalf("result = %q, want updated", result)
-	}
-	if f.lastReq["id"].(float64) != 7 {
-		t.Fatalf("updated id = %v, want existing hook 7", f.lastReq["id"])
-	}
-	if urls := f.lastReq["urls"].([]any); urls[0].(string) != c.callbackURL {
-		t.Fatalf("url = %v, want %q", urls[0], c.callbackURL)
-	}
-}
 
-// A throttled hook still delivers, so nothing looks broken — but readings
-// arrive too sparsely to time a run, which inflates reported runtime severalfold.
-func TestReconcileRepairsThrottledHook(t *testing.T) {
-	cond := "ev.apower >= 0"
-	h := healthyHook()
-	h.Condition = &cond
-	h.RepeatPeriod = 60
-	f := &fakeShelly{hooks: []shellyHook{h}}
-	c := newTestClient(t, f)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := healthyHook()
+			h.ID = 7
+			tc.mutate(&h)
+			f := &fakeShelly{hooks: []shellyHook{h}}
+			c := newTestClient(t, f)
 
-	result, err := c.reconcile(context.Background())
-	if err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	if result != "updated" {
-		t.Fatalf("result = %q, want updated", result)
-	}
-	if f.lastReq["condition"] != nil {
-		t.Fatalf("condition = %v, want cleared", f.lastReq["condition"])
-	}
-	if f.lastReq["repeat_period"].(float64) != 0 {
-		t.Fatalf("repeat_period = %v, want cleared to 0", f.lastReq["repeat_period"])
-	}
-}
-
-func TestReconcileRepairsDisabledHook(t *testing.T) {
-	h := healthyHook()
-	h.Enable = false
-	f := &fakeShelly{hooks: []shellyHook{h}}
-	c := newTestClient(t, f)
-
-	result, err := c.reconcile(context.Background())
-	if err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	if result != "updated" {
-		t.Fatalf("result = %q, want updated", result)
-	}
-	if f.lastReq["enable"] != true {
-		t.Fatalf("enable = %v, want true", f.lastReq["enable"])
+			result, err := c.reconcile(context.Background())
+			if err != nil {
+				t.Fatalf("reconcile: %v", err)
+			}
+			if result != "updated" {
+				t.Fatalf("result = %q, want updated", result)
+			}
+			if f.lastReq["id"].(float64) != 7 {
+				t.Fatalf("updated id = %v, want the existing hook", f.lastReq["id"])
+			}
+			tc.check(t, f.lastReq)
+		})
 	}
 }
 
@@ -233,5 +219,3 @@ func TestReconcileSurfacesShellyError(t *testing.T) {
 		t.Fatal("expected an error when the device reports one in a 200 body")
 	}
 }
-
-

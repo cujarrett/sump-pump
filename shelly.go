@@ -14,22 +14,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Shelly only substitutes the ${ev.<attr>} form. A bare ${apower} is passed
-// through as a literal, which webhookHandler rejects as a 400 — the device
-// keeps calling and nothing is ever recorded.
-const shellyCallbackPath = "/webhook?apower=${ev.apower}"
+// Only the ${ev.<attr>} form is substituted. A bare ${apower} arrives as a
+// literal and webhookHandler rejects every delivery as a 400.
+const shellyCallbackPath = webhookPath + "?apower=${ev.apower}"
 
-// The hook carries no condition and no repeat_period, and that is deliberate.
-//
-// sump_pump_running is a gauge that holds its last value until the next
-// delivery, so run duration is only ever as accurate as the delivery rate.
-// Unthrottled pm1.apower_change fires on both edges of a run within a second or
-// two, which is what makes a twelve second run measurable. Setting either field
-// throttles the event to roughly one call every three minutes and inflates
-// reported runtime about fivefold.
-//
-// Liveness comes from the reconcile call itself, so there is no need for a
-// device side heartbeat — which would cost exactly the accuracy above.
+// Unthrottled so both edges of a run land within seconds of each other. A
+// condition or repeat_period throttles this to ~3min, too sparse to time a
+// twelve second run, and inflates reported runtime about fivefold.
 const shellyEvent = "pm1.apower_change"
 
 type shellyHook struct {
@@ -41,9 +32,11 @@ type shellyHook struct {
 	RepeatPeriod int      `json:"repeat_period"`
 }
 
+// configured is 0 whenever a reconcile fails, which covers every way the meter
+// goes out of reach — so it doubles as the liveness signal and no separate
+// last-seen timestamp is needed.
 type shellyMetrics struct {
 	configured prometheus.Gauge
-	lastSeen   prometheus.Gauge
 }
 
 type shellyClient struct {
@@ -118,9 +111,10 @@ func (c *shellyClient) rpc(ctx context.Context, method string, params, out any) 
 	return nil
 }
 
+// matchesDesired and hookParams describe the same hook, one as a check and one
+// as a write. Edit them together or the loop either never converges or stops
+// seeing drift.
 func (c *shellyClient) matchesDesired(h shellyHook) bool {
-	// A condition or repeat_period left on the hook throttles deliveries and
-	// silently wrecks duration accuracy, so treat either as drift to repair.
 	return h.Enable && h.Event == shellyEvent &&
 		h.Condition == nil && h.RepeatPeriod == 0 &&
 		len(h.URLs) == 1 && h.URLs[0] == c.callbackURL
@@ -181,13 +175,11 @@ func (c *shellyClient) run(ctx context.Context, interval time.Duration, m *shell
 		result, err := c.reconcile(tick)
 		cancel()
 
-		switch {
-		case err != nil:
+		if err != nil {
 			m.configured.Set(0)
 			log.Printf("shelly reconcile: %v", err)
-		default:
+		} else {
 			m.configured.Set(1)
-			m.lastSeen.Set(float64(time.Now().Unix()))
 			if result != "ok" {
 				log.Printf("shelly webhook %s", result)
 			}
@@ -201,9 +193,10 @@ func (c *shellyClient) run(ctx context.Context, interval time.Duration, m *shell
 	}
 }
 
-// startShellyReconciler wires the reconciler if it is configured. Both env vars
-// are required: without them the bridge behaves exactly as it did before.
-func startShellyReconciler(ctx context.Context, m *shellyMetrics) {
+// The metric is registered here, not in main, so a disabled reconciler exports
+// nothing at all. A registered-but-never-set gauge reads 0, which is
+// indistinguishable from a real failure and alerts forever.
+func startShellyReconciler(ctx context.Context, reg prometheus.Registerer) {
 	addr := getenv("SHELLY_ADDR", "")
 	base := getenv("SHELLY_CALLBACK_BASE", "")
 	if addr == "" || base == "" {
@@ -212,9 +205,17 @@ func startShellyReconciler(ctx context.Context, m *shellyMetrics) {
 	}
 
 	interval := time.Minute
-	if d, err := time.ParseDuration(getenv("SHELLY_RECONCILE_INTERVAL", "1m")); err == nil && d > 0 {
+	if d, err := time.ParseDuration(os.Getenv("SHELLY_RECONCILE_INTERVAL")); err == nil && d > 0 {
 		interval = d
 	}
+
+	m := &shellyMetrics{
+		configured: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "shelly_webhook_configured",
+			Help: "1 if the last reconcile reached the meter and its webhook matched desired config.",
+		}),
+	}
+	reg.MustRegister(m.configured)
 
 	c := newShellyClient(addr, base)
 	log.Printf("shelly reconciler on %s every %s -> %s", c.addr, interval, c.callbackURL)

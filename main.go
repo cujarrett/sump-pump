@@ -56,13 +56,17 @@ func (rw *statusResponseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// Shared so the mux route and the URL the meter is told to call cannot drift —
+// a rename would otherwise point the device at a 404 silently.
+const webhookPath = "/webhook"
+
 var metricsSkipPaths = map[string]struct{}{
 	"/healthz":     {},
 	"/favicon.ico": {},
 }
 
 var metricsKnownPaths = map[string]struct{}{
-	"/webhook": {},
+	webhookPath: {},
 }
 
 func (a *app) metricsMiddleware(next http.Handler) http.Handler {
@@ -189,23 +193,13 @@ func (a *app) webhookHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	metricsPort := os.Getenv("METRICS_PORT")
-	if metricsPort == "" {
-		metricsPort = "9090"
-	}
-	natsURL := os.Getenv("NATS_URL")
-	if natsURL == "" {
-		natsURL = "nats://localhost:4222"
-	}
+	port := getenv("PORT", "8080")
+	metricsPort := getenv("METRICS_PORT", "9090")
+	natsURL := getenv("NATS_URL", "nats://localhost:4222")
+
 	threshold := 300.0
-	if t := os.Getenv("WATTS_THRESHOLD"); t != "" {
-		if v, err := strconv.ParseFloat(t, 64); err == nil && v > 0 {
-			threshold = v
-		}
+	if v, err := strconv.ParseFloat(os.Getenv("WATTS_THRESHOLD"), 64); err == nil && v > 0 {
+		threshold = v
 	}
 
 	reg := prometheus.NewRegistry()
@@ -230,18 +224,7 @@ func main() {
 		Help:    "HTTP request latency in seconds.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method", "path"})
-	shelly := &shellyMetrics{
-		configured: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "shelly_webhook_configured",
-			Help: "1 if the Shelly webhook matched desired config at the last reconcile, 0 otherwise.",
-		}),
-		lastSeen: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "shelly_last_seen_timestamp_unix",
-			Help: "Unix time of the last successful reconcile, meaning the meter answered.",
-		}),
-	}
-	reg.MustRegister(wattsGauge, runningGauge, runsTotal, requestsTotal, requestDuration,
-		shelly.configured, shelly.lastSeen)
+	reg.MustRegister(wattsGauge, runningGauge, runsTotal, requestsTotal, requestDuration)
 
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
@@ -266,11 +249,11 @@ func main() {
 
 	// Runs in the background and tolerates an unreachable device, so a Shelly
 	// that is slow to rejoin WiFi after an outage never blocks startup.
-	startShellyReconciler(context.Background(), shelly)
+	startShellyReconciler(context.Background(), reg)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
-	mux.HandleFunc("/webhook", a.webhookHandler)
+	mux.HandleFunc(webhookPath, a.webhookHandler)
 	mux.HandleFunc("/", notFoundHandler)
 
 	metricsMux := http.NewServeMux()

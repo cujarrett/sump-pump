@@ -35,10 +35,10 @@ about twelve seconds. At one sample per three minutes a twelve second event is
 invisible: the running flag stays stuck on until the next call, so a 12s run
 gets logged as 7 minutes — five times the real runtime.
 
-Liveness therefore comes from the reconcile call itself — a successful one means
-the meter answered, stamped on `shelly_last_seen_timestamp_unix`. Never add a
-device side heartbeat to get it; a heartbeat needs `repeat_period`, which is the
-trade above.
+Liveness therefore comes from the reconcile call itself: `shelly_webhook_configured`
+is 1 only when the last reconcile reached the meter and found the hook correct.
+Never add a device side heartbeat to get it — a heartbeat needs `repeat_period`,
+which is the trade above.
 
 ## Manual recovery
 
