@@ -33,7 +33,7 @@ type shellyHook struct {
 }
 
 // configured is 0 whenever a reconcile fails, which covers every way the meter
-// goes out of reach — so it doubles as the liveness signal and no separate
+// goes out of reach - so it doubles as the liveness signal and no separate
 // last-seen timestamp is needed.
 type shellyMetrics struct {
 	configured prometheus.Gauge
@@ -132,7 +132,7 @@ func (c *shellyClient) hookParams() map[string]any {
 
 // reconcile makes the device's webhook match what this bridge expects. It is
 // idempotent, so the startup call and the periodic call are the same code path
-// — and that is also the repair path after a power loss wipes device flash.
+// - and that is also the repair path after a power loss wipes device flash.
 // Returns "ok", "created" or "updated".
 func (c *shellyClient) reconcile(ctx context.Context) (string, error) {
 	var list struct {
@@ -165,7 +165,7 @@ func (c *shellyClient) reconcile(ctx context.Context) (string, error) {
 // error: an unreachable Shelly must not stop the bridge from serving, since
 // after an outage the device may take minutes to rejoin WiFi.
 //
-// A successful reconcile is also the liveness signal — the device answered.
+// A successful reconcile is also the liveness signal - the device answered.
 func (c *shellyClient) run(ctx context.Context, interval time.Duration, m *shellyMetrics) {
 	t := time.NewTicker(interval)
 	defer t.Stop()

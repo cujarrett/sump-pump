@@ -1,15 +1,15 @@
 ## Rules
 
 - **Never run `git commit`, `git push`, or any git command that writes to or modifies repository history or remotes.** If a task requires committing or pushing, stop and tell the user to run the git command manually.
-- **When debugging, always list every command used** — show the command, what it does, and why — so the user can learn the debugging workflow. Do this inline as you debug, not as a summary at the end.
+- **When debugging, always list every command used** - show the command, what it does, and why - so the user can learn the debugging workflow. Do this inline as you debug, not as a summary at the end.
 
 ### Pre-commit safety check
 
-Before telling the user to commit, always run `/security-review`. It reviews the pending changes on the current branch for security issues. Once it confirms the changes are safe, offer the user a suggested commit message — do not run `git commit` yourself.
+Before telling the user to commit, always run `/security-review`. It reviews the pending changes on the current branch for security issues. Once it confirms the changes are safe, offer the user a suggested commit message - do not run `git commit` yourself.
 
 ## Philosophy: Grug-Brained Development
 
-> "Complexity very, very bad." — [grugbrain.dev](https://grugbrain.dev/)
+> "Complexity very, very bad." - [grugbrain.dev](https://grugbrain.dev/)
 
 - **Say no.** The best weapon against complexity is the word "no". No new feature, no new abstraction, until it earns its place.
 - **No abstraction until a pattern repeats three times.** Let cut points emerge naturally from the code; don't invent them up front.
@@ -29,14 +29,14 @@ The Shelly built-in webhook system (`Webhook.*` RPC) was tried but never deliver
 
 **`192.168.10.188` must be a fixed IP reservation in UniFi for the device's MAC (`EC:DA:3B:C6:B2:AC`), not just an observed DHCP address.** The Script's webhook call and the `SHELLY_URL` polling fallback both hardcode this IP. If the reservation is ever removed (e.g. during device troubleshooting), the device can keep the same IP by luck for a while, then silently drift to a different one on its next lease renewal, breaking event delivery with no obvious error.
 
-**The Shelly mobile app / cloud account is not part of this integration and does not need to be paired for events to flow.** The device only needs local WiFi connectivity and the Script above — RPC calls (`Script.*`, `PM1.GetStatus`, etc.) work over the local network regardless of whether the device is claimed in the app. If the device won't pair with the app (BLE/WiFi provisioning failures), configuring WiFi directly via the device's own local AP-mode page (connect to its `ShellyPMMiniG3-*` hotspot, then `http://192.168.33.1`) is a reliable fallback that doesn't require the app at all.
+**The Shelly mobile app / cloud account is not part of this integration and does not need to be paired for events to flow.** The device only needs local WiFi connectivity and the Script above - RPC calls (`Script.*`, `PM1.GetStatus`, etc.) work over the local network regardless of whether the device is claimed in the app. If the device won't pair with the app (BLE/WiFi provisioning failures), configuring WiFi directly via the device's own local AP-mode page (connect to its `ShellyPMMiniG3-*` hotspot, then `http://192.168.33.1`) is a reliable fallback that doesn't require the app at all.
 
 ### Restoring polling (recovery fallback)
 
 If the Shelly Script stops running (e.g. firmware wipe, device replacement), polling can be re-enabled without a code change:
 
 1. Add `SHELLY_URL=http://192.168.10.188` and `POLL_INTERVAL=15s` back to the `sump-pump-bridge-config` secret in the `sump-pump` namespace
-2. Restart the bridge pod — the removed polling goroutine needs to be added back to `main.go` first (see below)
+2. Restart the bridge pod - the removed polling goroutine needs to be added back to `main.go` first (see below)
 3. Restore the Shelly Script via the Shelly RPC API:
 
 ```bash
@@ -46,7 +46,7 @@ curl -X POST http://192.168.10.188/rpc/Script.SetConfig -d '{"id":1,"config":{"e
 curl -X POST http://192.168.10.188/rpc/Script.Start -d '{"id":1}'
 ```
 
-### Polling goroutine (removed — paste back into main() if needed)
+### Polling goroutine (removed - paste back into main() if needed)
 
 ```go
 // Polling fallback: if SHELLY_URL is set, poll PM1.GetStatus every POLL_INTERVAL (default 15s).

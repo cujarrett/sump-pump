@@ -21,7 +21,7 @@ import (
 var version = "dev"
 
 // app holds all dependencies. Config is read once in main(); handlers are methods on *app.
-// js is nil in tests — any NATS publish call is skipped when js is nil.
+// js is nil in tests - any NATS publish call is skipped when js is nil.
 type app struct {
 	js        jetstream.JetStream // nil in unit tests
 	threshold float64
@@ -56,7 +56,7 @@ func (rw *statusResponseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// Shared so the mux route and the URL the meter is told to call cannot drift —
+// Shared so the mux route and the URL the meter is told to call cannot drift -
 // a rename would otherwise point the device at a 404 silently.
 const webhookPath = "/webhook"
 

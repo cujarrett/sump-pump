@@ -229,7 +229,7 @@ func TestMetricsMiddlewareSkipsHealthPath(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// /health is skipped — counter for any label combination should be 0
+	// /health is skipped - counter for any label combination should be 0
 	if got := testutil.ToFloat64(a.requestsTotal.WithLabelValues("GET", "/health", "200")); got != 0 {
 		t.Fatalf("expected /health to be skipped, got counter=%v", got)
 	}
