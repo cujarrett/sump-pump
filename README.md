@@ -1,10 +1,21 @@
-# sump-pump-bridge
+# sump-pump
 
-Receives Shelly webhook events and publishes them to NATS JetStream.
+Two Go services that watch a sump pump through a Shelly PM Mini Gen3 power meter.
 
-The meter calls `/webhook` with current wattage. Every reading becomes a
-Prometheus gauge; NATS gets a message only when the pump crosses the run
-threshold.
+| Binary | What it does |
+|---|---|
+| [bridge](./cmd/bridge/) | Receives meter webhooks, exposes wattage as Prometheus metrics, publishes run/idle events to NATS JetStream |
+| [consumer](./cmd/consumer/) | Consumes those events, tracks run count, duration and cost as Prometheus metrics |
+
+They share [internal/event](./internal/event/), which holds the NATS subjects and
+the message body, so the contract cannot drift between publisher and reader.
+
+## Development
+
+```bash
+just ci            # lint, test, build both
+just run bridge    # or: just run consumer
+```
 
 ## Device config
 
@@ -61,15 +72,13 @@ kubectl exec -n sump-pump deploy/sump-pump-bridge -c api -- \
   wget -qO- localhost:9090/metrics | grep 'path="/webhook"'
 ```
 
-## Development
-
-```bash
-just ci   # lint, test, build
-```
-
 ## Deployment
 
-CI builds an ARM64 image, pushes it to GHCR, then commits the new tag to the `sump-pump` workspace in [homelab-workspaces](https://github.com/cujarrett/homelab-workspaces). ArgoCD deploys from there.
+CI builds an ARM64 image per binary, pushes both to GHCR as
+`ghcr.io/cujarrett/sump-pump-bridge` and `ghcr.io/cujarrett/sump-pump-consumer`,
+then commits the new tags to the `sump-pump` workspace in
+[homelab-workspaces](https://github.com/cujarrett/homelab-workspaces). ArgoCD
+deploys from there.
 
 ### Rotating `HOMELAB_PAT`
 

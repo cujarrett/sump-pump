@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cujarrett/sump-pump/internal/event"
 	nats "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/prometheus/client_golang/prometheus"
@@ -135,15 +136,15 @@ func (a *app) processWatts(ctx context.Context, watts float64) {
 	a.mu.Unlock()
 
 	if changed {
-		subject := "home.appliance.sump-pump.idle"
+		subject := event.SubjectIdle
 		if running {
-			subject = "home.appliance.sump-pump.running"
+			subject = event.SubjectRunning
 			if a.runsTotal != nil {
 				a.runsTotal.Inc()
 			}
 		}
 		if a.js != nil {
-			payload, _ := json.Marshal(map[string]float64{"watts": watts})
+			payload, _ := json.Marshal(event.Reading{Watts: watts})
 			pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			if _, err := a.js.Publish(pubCtx, subject, payload); err != nil {
@@ -273,7 +274,7 @@ func main() {
 		}
 	}()
 
-	log.Printf("sump-pump-bridge %s listening on :%s (threshold=%.0fW)", version, port, threshold)
+	log.Printf("bridge %s listening on :%s (threshold=%.0fW)", version, port, threshold)
 
 	srv := &http.Server{
 		Addr:              ":" + port,

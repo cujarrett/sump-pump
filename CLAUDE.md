@@ -23,6 +23,15 @@ Before telling the user to commit, always run `/security-review`. It reviews the
 
 ## Shelly Event Delivery
 
+
+---
+
+## Layout
+
+One module, two binaries. `cmd/bridge` and `cmd/consumer` are `package main`;
+`internal/event` holds the NATS subjects and message body both import. Anything
+crossing between the two binaries belongs in `internal/event` - nowhere else.
+
 Events are forwarded by a Shelly Script (id=1, named `sump-pump-bridge`) running on the device at `192.168.10.188`. The script uses `Shelly.addEventHandler` on `pm1:0` and calls `HTTP.GET` to `http://192.168.10.100:30880/webhook?apower=<value>` (NodePort service `sump-pump-bridge-nodeport`, port 30880 in the `sump-pump` namespace).
 
 The Shelly built-in webhook system (`Webhook.*` RPC) was tried but never delivered `pm1.apower_change` events even after a firmware update to 1.3.3. The script approach bypasses that broken path entirely.

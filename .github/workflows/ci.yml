@@ -32,10 +32,17 @@ jobs:
       - name: Test
         run: go test ./...
 
+  # Both images are built on every push to main, whichever binary changed. They
+  # share a go.mod, so a dependency bump touches both anyway and path filtering
+  # would only save a minute.
   build-and-push:
     runs-on: ubuntu-latest
     needs: [lint, test]
     if: github.ref == 'refs/heads/main'
+
+    strategy:
+      matrix:
+        binary: [bridge, consumer]
 
     permissions:
       contents: read
@@ -64,15 +71,24 @@ jobs:
           context: .
           platforms: linux/arm64
           push: true
+          build-args: |
+            BINARY=${{ matrix.binary }}
           tags: |
-            ghcr.io/cujarrett/sump-pump-bridge:main
-            ghcr.io/cujarrett/sump-pump-bridge:sha-${{ github.sha }}
+            ghcr.io/cujarrett/sump-pump-${{ matrix.binary }}:main
+            ghcr.io/cujarrett/sump-pump-${{ matrix.binary }}:sha-${{ github.sha }}
 
+  # The reusable workflow derives image and file from the repo name, which no
+  # longer matches either image, so both are passed explicitly.
   deploy:
     needs: build-and-push
     if: github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        binary: [bridge, consumer]
     uses: cujarrett/homelab-workspaces/.github/workflows/update-image-tag.yml@main
     with:
       namespace: sump-pump
+      image: ghcr.io/cujarrett/sump-pump-${{ matrix.binary }}
+      file: sump-pump/sump-pump-${{ matrix.binary }}.yaml
     secrets:
       homelab_pat: ${{ secrets.HOMELAB_WORKSPACES_PAT }}

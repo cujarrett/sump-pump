@@ -14,10 +14,11 @@ lint:
 test:
     go test -race ./...
 
-# Build binary
+# Build both binaries
 build:
-    go build -o sump-pump-bridge .
+    go build -o bin/bridge ./cmd/bridge
+    go build -o bin/consumer ./cmd/consumer
 
-# Run locally
-run:
-    go run .
+# Run one binary locally - just run bridge
+run BINARY:
+    go run ./cmd/{{BINARY}}

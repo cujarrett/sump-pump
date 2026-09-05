@@ -1,4 +1,4 @@
-module github.com/cujarrett/sump-pump-bridge
+module github.com/cujarrett/sump-pump
 
 go 1.26
 
