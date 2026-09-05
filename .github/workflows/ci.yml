@@ -75,4 +75,4 @@ jobs:
     with:
       namespace: sump-pump
     secrets:
-      homelab_pat: ${{ secrets.HOMELAB_PAT }}
+      homelab_pat: ${{ secrets.HOMELAB_WORKSPACES_PAT }}
