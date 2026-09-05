@@ -80,7 +80,7 @@ then commits the new tags to the `sump-pump` workspace in
 [homelab-workspaces](https://github.com/cujarrett/homelab-workspaces). ArgoCD
 deploys from there.
 
-### Rotating `HOMELAB_PAT`
+### Rotating `HOMELAB_WORKSPACES_PAT`
 
 Shared across all `homelab-workspaces`-deploying repos and rotated centrally - see
 [GitHub Tokens](https://github.com/cujarrett/homelab/blob/main/docs/github-tokens.md) in the
