@@ -1,6 +1,6 @@
 # One Dockerfile for both binaries - they differ only in which cmd is built.
 # Pass --build-arg BINARY=bridge or consumer.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
