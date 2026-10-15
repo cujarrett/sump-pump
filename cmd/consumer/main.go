@@ -155,6 +155,9 @@ func main() {
 		lastRunWatts:     lastRunWatts,
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		log.Fatalf("nats connect %s: %v", natsURL, err)
@@ -239,9 +242,16 @@ func main() {
 		}
 	}()
 
-	// Block until SIGINT or SIGTERM, then stop the consumer cleanly.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	// Deferred cc.Stop and nc.Close run after the servers drain.
+	<-ctx.Done()
 	log.Println("shutting down")
+	// Kubernetes sends SIGKILL after 30s, so finish draining well before that.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown: %v", err)
+	}
+	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("metrics shutdown: %v", err)
+	}
 }

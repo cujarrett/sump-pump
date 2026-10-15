@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/cujarrett/sump-pump/internal/event"
@@ -269,12 +272,10 @@ func main() {
 	}
 	go func() {
 		log.Printf("metrics listening on :%s", metricsPort)
-		if err := metricsSrv.ListenAndServe(); err != nil {
+		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal(err)
 		}
 	}()
-
-	log.Printf("bridge %s listening on :%s (threshold=%.0fW)", version, port, threshold)
 
 	srv := &http.Server{
 		Addr:              ":" + port,
@@ -284,7 +285,25 @@ func main() {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		log.Printf("bridge %s listening on :%s (threshold=%.0fW)", version, port, threshold)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("shutting down")
+	// Kubernetes sends SIGKILL after 30s, so finish draining well before that.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown: %v", err)
+	}
+	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("metrics shutdown: %v", err)
 	}
 }
