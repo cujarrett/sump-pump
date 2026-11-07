@@ -80,9 +80,6 @@ then commits the new tags to the `sump-pump` workspace in
 [homelab-workspaces](https://github.com/cujarrett/homelab-workspaces). ArgoCD
 deploys from there.
 
-### Rotating `HOMELAB_WORKSPACES_PAT`
+### Rotating `HOMELAB_WORKSPACES_APP_KEY`
 
-Shared across all `homelab-workspaces`-deploying repos and rotated centrally - see
-[GitHub Tokens](https://github.com/cujarrett/homelab/blob/main/docs/github-tokens.md) in the
-homelab repo. When it expires, `deploy` fails on `Bad credentials (HTTP 401)` while `test` and
-`build-and-push` stay green - images keep building, the cluster keeps running the old tag.
+One key serves every repo that deploys to `homelab-workspaces`. [GitHub Tokens → Rotating an App key](https://github.com/cujarrett/homelab/blob/main/docs/github-tokens.md#rotating-an-app-key) sets the new one on all of them in one paste. A missing or revoked key fails `deploy` while `test` and `build-and-push` stay green.
