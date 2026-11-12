@@ -1,3 +1,7 @@
+# sump-pump
+
+Two Go services that watch a sump pump through a Shelly PM Mini Gen3 power meter. Commands are in the README and the `justfile`.
+
 ## Rules
 
 - **Never run `git commit`, `git push`, or any git command that writes to or modifies repository history or remotes.** If a task requires committing or pushing, stop and tell the user to run the git command manually.
@@ -21,77 +25,13 @@ Before telling the user to commit, always run `/security-review`. It reviews the
 - **DRY is not a law.** A little copy-paste beats a complex abstraction built for two cases.
 - **No FOLD** (Fear Of Looking Dumb). If something is too complex, say so. That's a signal to simplify, not a personal failing.
 
----
-
-## Shelly Event Delivery
-
-
----
-
 ## Layout
 
-One module, two binaries. `cmd/bridge` and `cmd/consumer` are `package main`;
-`internal/event` holds the NATS subjects and message body both import. Anything
-crossing between the two binaries belongs in `internal/event` - nowhere else.
+One module, two binaries. `cmd/bridge` and `cmd/consumer` are `package main`. `internal/event` holds the NATS subjects and the message body that both import. Anything that crosses between the two binaries belongs in `internal/event`.
 
-Events are forwarded by a Shelly Script (id=1, named `sump-pump-bridge`) running on the device at `192.168.10.188`. The script uses `Shelly.addEventHandler` on `pm1:0` and calls `HTTP.GET` to `http://192.168.10.100:30880/webhook?apower=<value>` (NodePort service `sump-pump-bridge-nodeport`, port 30880 in the `sump-pump` namespace).
+## Shelly meter
 
-The Shelly built-in webhook system (`Webhook.*` RPC) was tried but never delivered `pm1.apower_change` events even after a firmware update to 1.3.3. The script approach bypasses that broken path entirely.
+The bridge reconciles the meter's webhook on startup and every minute. [README → Device config](./README.md#device-config) has the env vars and the two device settings the reconciler enforces. [README → Manual recovery](./README.md#manual-recovery) has the commands for when the reconciler is off.
 
-**`192.168.10.188` must be a fixed IP reservation in UniFi for the device's MAC (`EC:DA:3B:C6:B2:AC`), not just an observed DHCP address.** The Script's webhook call and the `SHELLY_URL` polling fallback both hardcode this IP. If the reservation is ever removed (e.g. during device troubleshooting), the device can keep the same IP by luck for a while, then silently drift to a different one on its next lease renewal, breaking event delivery with no obvious error.
-
-**The Shelly mobile app / cloud account is not part of this integration and does not need to be paired for events to flow.** The device only needs local WiFi connectivity and the Script above - RPC calls (`Script.*`, `PM1.GetStatus`, etc.) work over the local network regardless of whether the device is claimed in the app. If the device won't pair with the app (BLE/WiFi provisioning failures), configuring WiFi directly via the device's own local AP-mode page (connect to its `ShellyPMMiniG3-*` hotspot, then `http://192.168.33.1`) is a reliable fallback that doesn't require the app at all.
-
-### Restoring polling (recovery fallback)
-
-If the Shelly Script stops running (e.g. firmware wipe, device replacement), polling can be re-enabled without a code change:
-
-1. Add `SHELLY_URL=http://192.168.10.188` and `POLL_INTERVAL=15s` back to the `sump-pump-bridge-config` secret in the `sump-pump` namespace
-2. Restart the bridge pod - the removed polling goroutine needs to be added back to `main.go` first (see below)
-3. Restore the Shelly Script via the Shelly RPC API:
-
-```bash
-curl -X POST http://192.168.10.188/rpc/Script.Create -d '{"name":"sump-pump-bridge"}'
-curl -X POST http://192.168.10.188/rpc/Script.PutCode -d '{"id":1,"code":"Shelly.addEventHandler(function(ev,ud){if(ev.component!==\"pm1:0\")return;var w=ev.info.apower;if(typeof w===\"undefined\")return;Shelly.call(\"HTTP.GET\",{url:\"http://192.168.10.100:30880/webhook?apower=\"+w},null,null);},null);\n","append":false}'
-curl -X POST http://192.168.10.188/rpc/Script.SetConfig -d '{"id":1,"config":{"enable":true}}'
-curl -X POST http://192.168.10.188/rpc/Script.Start -d '{"id":1}'
-```
-
-### Polling goroutine (removed - paste back into main() if needed)
-
-```go
-// Polling fallback: if SHELLY_URL is set, poll PM1.GetStatus every POLL_INTERVAL (default 15s).
-if shellyURL := os.Getenv("SHELLY_URL"); shellyURL != "" {
-    pollInterval := 15 * time.Second
-    if s := os.Getenv("POLL_INTERVAL"); s != "" {
-        if d, err := time.ParseDuration(s); err == nil && d > 0 {
-            pollInterval = d
-        }
-    }
-    httpClient := &http.Client{Timeout: 5 * time.Second}
-    go func() {
-        log.Printf("polling %s/rpc/PM1.GetStatus?id=0 every %v", shellyURL, pollInterval)
-        ticker := time.NewTicker(pollInterval)
-        defer ticker.Stop()
-        for range ticker.C {
-            resp, err := httpClient.Get(shellyURL + "/rpc/PM1.GetStatus?id=0")
-            if err != nil {
-                log.Printf("poll shelly: %v", err)
-                continue
-            }
-            var result struct {
-                APower float64 `json:"apower"`
-            }
-            decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-            _ = resp.Body.Close()
-            if decodeErr != nil {
-                log.Printf("poll shelly decode: %v", decodeErr)
-                continue
-            }
-            a.processWatts(context.Background(), result.APower)
-        }
-    }()
-}
-```
-
-Paste this block into `main()` just before `srv := &http.Server{...}`.
+- **Fixed IP:** `192.168.10.188` must be a UniFi reservation for the meter's MAC (`EC:DA:3B:C6:B2:AC`). `SHELLY_ADDR` hardcodes that address. Without the reservation the meter can move to a new address on a lease renewal, and readings stop with no error.
+- **Shelly app:** pairing with the app or a cloud account is optional. The meter needs only local WiFi. If app pairing fails, join the meter's `ShellyPMMiniG3-*` hotspot and set WiFi at `http://192.168.33.1`.
